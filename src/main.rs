@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use std::{collections::HashMap, sync::RwLock};
 
 #[macro_use]
@@ -7,7 +7,7 @@ extern crate failure;
 #[macro_use]
 extern crate rocket;
 use headless_chrome::protocol::Method;
-use rocket::response::status::{BadRequest, NotFound};
+use rocket::response::status::NotFound;
 
 #[macro_use]
 extern crate lazy_static;
@@ -21,25 +21,20 @@ use headless_chrome::{
 };
 extern crate openssl_probe;
 
-use hyper::{Body, Client, Request, Uri};
-use hyper_tls::HttpsConnector;
+use hyper::{Client, Uri};
 
 use anyhow::{Context, Result};
 
 static USERNAME: &str = "USER_NAME_X@email.com";
 static PASSWROD: &str = "PASS_NAME_X";
-static AZURE_ADDRESS: &str =
-    "https://tipsportloginprovider.azurewebsites.net/api/set_login_request?code=Pd18OTkz/YopeAbsg67CKPDE45bAvRUQoZRl5sUMDweoEp/XGeim1Q==";
-const HOUR_IN_SECONDS: u64 = 60 * MINUTE_IN_SECONDS;
-const MINUTE_IN_SECONDS: u64 = 60;
 lazy_static! {
     static ref LATEST_RESPONSE: RwLock<Option<(SystemTime, LoginRequest)>> = RwLock::new(None);
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct CloseReturnObject {}
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Close(pub Option<serde_json::Value>);
 
 impl Method for Close {
@@ -47,21 +42,10 @@ impl Method for Close {
     type ReturnObject = CloseReturnObject;
 }
 
-// #[launch]
-// fn rocket() -> _ {
-//     openssl_probe::init_ssl_cert_env_vars();
-//     rocket::build().mount("/", routes![get_tipsport_login, send_data_to_azure])
-// }
-
-#[tokio::main]
-async fn main() -> ! {
-    loop {
-        match send_data_to_azure().await {
-            Ok(data) => eprintln!("{}", data),
-            Err(e) => eprintln!("Error: {:?}", e.0),
-        };
-        tokio::time::sleep(Duration::from_secs(30 * MINUTE_IN_SECONDS)).await;
-    }
+#[launch]
+fn rocket() -> _ {
+    openssl_probe::init_ssl_cert_env_vars();
+    rocket::build().mount("/", routes![get_tipsport_login])
 }
 
 fn is_cached_valid(cached_value: &Option<(SystemTime, LoginRequest)>) -> bool {
@@ -73,43 +57,13 @@ fn is_cached_valid(cached_value: &Option<(SystemTime, LoginRequest)>) -> bool {
     false
 }
 
-#[get("/send-data-to-azure")]
-async fn send_data_to_azure() -> Result<String, BadRequest<String>> {
-    let data = get_tipsport_login()
-        .await
-        .map_err(|err| BadRequest(Some(err.0)))?;
-    eprintln!("{}", &data);
-    let https = HttpsConnector::new();
-    let client = Client::builder().build(https);
-    let req = Request::builder()
-        .method("POST")
-        .uri(AZURE_ADDRESS)
-        .body(Body::from(data))
-        .unwrap();
-    let response = client
-        .request(req)
-        .await
-        .map_err(|err| BadRequest(Some(err.to_string())))?;
-    if response.status().is_success() {
-        Ok("SUCCESS".to_string())
-    } else {
-        Err(BadRequest(Some(response.status().to_string())))
-    }
-}
-
 #[get("/tipsport-login")]
 async fn get_tipsport_login() -> Result<String, NotFound<String>> {
-    // {
-    //     let cached = LATEST_RESPONSE.read().unwrap();
-    //     if is_cached_valid(&cached) {
-    //         return Ok(serde_json::to_string(&cached.as_ref().unwrap().1).unwrap());
-    //     }
-    // }
     eprintln!("Generating tipsport login request");
-    let _res = login_tipsport().await;
-    // if res.is_err() {
-    //     eprintln!("login_tipsport error: {:?}", res);
-    // }
+    let res = login_tipsport().await;
+    if res.is_err() {
+        eprintln!("login_tipsport error: {:?}", res);
+    }
     {
         let cached = LATEST_RESPONSE.read().unwrap();
         if is_cached_valid(&cached) {
@@ -203,7 +157,6 @@ async fn login_tipsport() -> Result<(), failure::Error> {
                 .filter(|(key, _)| key.to_lowercase().ne("cookie"))
                 .collect(),
         };
-        // println!("{}", serde_json::to_string(&login_request).unwrap());
         {
             let mut w = LATEST_RESPONSE.write().unwrap();
             *w = Some((SystemTime::now(), login_request));
